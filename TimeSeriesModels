@@ -1,0 +1,914 @@
+# TIME SERIES MODELS
+install.packages("readxl")
+library(readxl)
+install.packages("writexl")
+library(writexl)
+install.packages("forecast")
+library(forecast)
+install.packages("xts")
+library(xts)
+install.packages("nlme")
+library(nlme)
+require(INLA)
+require(ggplot2)
+require(mgcv)
+require(dplyr)
+install.packages("DAAG")
+require(DAAG)
+require(reshape2)
+require(MASS)
+require(plotly)
+require(car)
+require(zoo)
+
+# Helper Functions
+#-----------------#
+
+cleanTable <- function(table) {
+  # A function to transform a csv file into a table.
+  clean.table <- c()
+  for (row in 1:length(table)) {
+    this.row <- strsplit(table[row],"\t")
+    clean.table <- rbind(clean.table,as.character(this.row[[1]]))
+  }
+  clean.table
+}
+
+write.excel <- function(x,row.names=FALSE,col.names=TRUE,...) {
+  write.table(x,"clipboard",sep="\t",row.names=row.names,col.names=col.names,...)
+}
+
+index <- function(lst,item,k,all=FALSE) {
+  # Return the first index of item in lst. If k = -1, return the last one. Return
+  # only the one index is all is false, else return all.
+  indices <- c()
+  n <- length(lst)
+  for (i in 1:n) {
+    if (item==lst[i]) {
+      indices <- append(indices,i,length(indices))
+    }
+  }
+  if ((k!=-1)&&(!all)) {
+    indices[k]
+  }
+  else if (k==-1) {
+    n <- length(indices)
+    indices[n]
+  }
+  else {
+    indices
+  }
+}
+
+unique <- function(lst) {
+  # Create a list of each unique element of lst.
+  unit <- c()
+  for (item in lst) {
+    if (!(item%in%unit)) {
+      unit <- append(unit,item,length(unit))
+    }
+  }
+  unit
+}
+
+countUnique <- function(lst) {
+  #Return each element in lst exactly once
+  unique <- c()
+  for (item in lst) {
+    if (!(item%in%unique)) {
+      unique <- append(unique,item,length(unique))
+    }
+  }
+  unique
+}
+
+myFilter <- function(lst, val,type="LEq") {
+  # Return all indices of list of type LEq (defualt==less than or equal to).
+  # Possible values of type== L, Eq, G, LEq, Eq, GEq
+  my.vals <- c()
+  n <- length(lst)
+  for (i in 1:n) {
+    if (lst[i]<=val) {
+      my.vals <- append(my.vals,i,length(my.vals))
+    }
+  }
+  my.vals
+}
+
+#-----------------#
+# Adding recoveries + R0 Calculations to compare to positivity rates + each other
+ca.conf <- global.confirmed[36:46,5:169]
+ca.rec <- global.recovered[37,5:169]
+ca.deaths <- global.deaths[36:46,5:169]
+all.caconf <- c()
+all.cadeaths <- c()
+for (rec in 1:165) {
+  this.conf <- sum(ca.conf[,rec])
+  this.death <- sum(ca.deaths[,rec])
+  all.caconf <- append(all.caconf,this.conf,length(all.caconf))
+  all.cadeaths <- append(all.cadeaths,this.death,length(all.cadeaths))
+}
+ca.conf <- all.caconf
+ca.deaths <- all.cadeaths
+ca.R0 <- ca.conf/(ca.rec+ca.deaths)
+rownames(ca.R0) <- ""
+ca.R0diff <- ca.R0[22:165]-rep(ca.R0[22],144)
+
+ch.conf <- global.confirmed[50:82,5:169]
+ch.rec <- global.recovered[41:73,5:169]
+ch.deaths <- global.deaths[50:82,5:169]
+all.chconf <- c()
+all.chrec <- c()
+all.chdeaths <- c()
+for (rec in 1:165) {
+  this.conf <- sum(ch.conf[,rec])
+  this.rec <- sum(ch.rec[,rec])
+  this.death <- sum(ch.deaths[,rec])
+  all.chconf <- append(all.chconf,this.conf,length(all.chconf))
+  all.chrec <- append(all.chrec,this.rec,length(all.chrec))
+  all.chdeaths <- append(all.chdeaths,this.death,length(all.chdeaths))
+}
+ch.conf <- all.chconf
+ch.rec <- all.chrec
+ch.deaths <- all.chdeaths
+ch.R0 <- ch.conf/(ch.rec+ch.deaths)
+ch.R0 <- matrix(ch.R0,nrow=1,ncol=165)
+colnames(ch.R0) <- colnames(ca.R0)
+rownames(ch.R0) <- ""
+ch.R0diff <- ch.R0[22:165]-rep(ch.R0[22],144)
+
+de.conf <- global.confirmed[121,5:169]
+de.rec <- global.recovered[113,5:169]
+de.deaths <- global.deaths[121,5:169]
+de.R0 <- de.conf/(de.rec+de.deaths)
+de.R0[1:49] <- rep(1,49)
+de.R0diff <- de.R0[22:165]-rep(de.R0[22],144)
+de.R0 <- matrix(de.R0,nrow=1,ncol=165)
+colnames(de.R0) <- colnames(ca.R0)
+rownames(de.R0) <- ""
+
+it.conf <- global.confirmed[121,5:169]
+it.rec <- global.recovered[113,5:169]
+it.itaths <- global.itaths[121,5:169]
+it.R0 <- it.conf/(it.rec+it.itaths)
+it.R0[1:49] <- rep(1,49)
+it.R0diff <- it.R0[22:165]-rep(it.R0[22],144)
+it.R0 <- matrix(it.R0,nrow=1,ncol=165)
+colnames(it.R0) <- colnames(ca.R0)
+rownames(it.R0) <- ""
+
+usa.conf <- us.confirmed[,5:169]
+usa.rec <- global.recovered[226,5:169]
+usa.deaths <- us.deaths[,5:169]
+all.usaconf <- c()
+all.usadeaths <- c()
+for (rec in 1:165) {
+  this.conf <- sum(usa.conf[,rec])
+  this.death <- sum(usa.deaths[,rec])
+  all.usaconf <- append(all.usaconf,this.conf,length(all.usaconf))
+  all.usadeaths <- append(all.usadeaths,this.death,length(all.usadeaths))
+}
+usa.conf <- all.usaconf
+usa.deaths <- all.usadeaths
+usa.R0 <- usa.conf/(usa.rec+usa.deaths)
+rownames(usa.R0) <- ""
+usa.R0diff <- usa.R0[22:165]-rep(usa.R0[22],144)
+
+fr.conf <- global.confirmed[c(108:117,259),5:169]
+fr.rec <- global.recovered[c(100:109,246),5:169]
+fr.deaths <- global.deaths[c(108:117,259),5:169]
+all.frconf <- c()
+all.frrec <- c()
+all.frdeaths <- c()
+for (rec in 1:165) {
+  this.conf <- sum(fr.conf[,rec])
+  this.rec <- sum(fr.rec[,rec])
+  this.death <- sum(fr.deaths[,rec])
+  all.frconf <- append(all.frconf,this.conf,length(all.frconf))
+  all.frrec <- append(all.frrec,this.rec,length(all.frrec))
+  all.frdeaths <- append(all.frdeaths,this.death,length(all.frdeaths))
+}
+fr.conf <- all.frconf
+fr.rec <- all.frrec
+fr.deaths <- all.frdeaths
+fr.R0 <- fr.conf/(fr.rec+fr.deaths)
+fr.R0 <- matrix(fr.R0,nrow=1,ncol=165)
+colnames(fr.R0) <- colnames(ca.R0)
+rownames(fr.R0) <- ""
+fr.R0diff <- fr.R0[22:165]-rep(fr.R0[22],144)
+
+uk.conf <- global.confirmed[c(218:224,249:251,258),5:169]
+uk.rec <- global.recovered[c(218:224,236:238,245),5:169]
+uk.deaths <- global.deaths[c(218:224,249:251,258),5:169]
+all.ukconf <- c()
+all.ukrec <- c()
+all.ukdeaths <- c()
+for (rec in 1:165) {
+  this.conf <- sum(uk.conf[,rec])
+  this.rec <- sum(uk.rec[,rec])
+  this.death <- sum(uk.deaths[,rec])
+  all.ukconf <- append(all.ukconf,this.conf,length(all.ukconf))
+  all.ukrec <- append(all.ukrec,this.rec,length(all.ukrec))
+  all.ukdeaths <- append(all.ukdeaths,this.death,length(all.ukdeaths))
+}
+uk.conf <- all.ukconf
+uk.rec <- all.ukrec
+uk.deaths <- all.ukdeaths
+uk.R0 <- uk.conf/(uk.rec+uk.deaths)
+uk.R0 <- matrix(uk.R0,nrow=1,ncol=165)
+colnames(uk.R0) <- colnames(ca.R0)
+rownames(uk.R0) <- ""
+uk.R0diff <- uk.R0[22:165]-rep(uk.R0[22],144)
+
+sw.conf <- global.confirmed[206,5:169]
+sw.rec <- global.recovered[204,5:169]
+sw.deaths <- global.deaths[206,5:169]
+sw.R0 <- sw.conf/(sw.rec+sw.deaths)
+sw.R0[1:49] <- rep(1,49)
+sw.R0diff <- sw.R0[22:165]-rep(sw.R0[22],144)
+sw.R0 <- matrix(sw.R0,nrow=1,ncol=165)
+colnames(sw.R0) <- colnames(ca.R0)
+rownames(sw.R0) <- ""
+
+# start at 34th-165th day!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+# To plot R0, do as.numeric()
+#-----------------#
+
+# CANADA MODEL #
+
+can.table <- readClipboard()
+can.data <- cleanTable(can.table)
+can.df <- as.data.frame(can.data[19:150,]) # Start records: Feb 24, 2020
+for (col in 1:ncol(can.df)) {
+  if (colnames(can.df)[col]=="Country") {
+    colnames(can.df)[col] <- "Date"
+  }
+}
+colnames(can.df) <- can.data[1,]
+
+datecols <- c()
+for (col in 1:ncol(can.df)) {
+  if (col%%18==1) {
+    datecols <- append(datecols,col,length(datecols))
+    colnames(can.df)[col] <- "Date"
+  }
+}
+
+ca.names <- c("Alberta","BritishColumbia","Manitoba","NovaScotia","Ontario",
+              "Quebec","Saskatchewan")
+nca <- length(ca.names)
+for (i in 1:nca) {
+  temp <- colnames(can.df)[c((((i-1)*18)+1):(((i - 1) * 18) + 18))]
+  this.name <- ca.names[i]
+  for (j in 1:18) {
+    newpaste <- paste(this.name,temp[j])
+    newpaste <- gsub(" ","",newpaste)
+    temp[j] <- newpaste
+  }
+  colnames(can.df)[c((((i-1)*18)+1):(((i - 1) * 18) + 18))] <- temp
+}
+
+can.ts1 <- c() # Pos ~ PM*SD
+can.tsld <- c() # Lockdown laws
+for (i in 1:nca) {
+  this.reg <- can.df[,((i-1)*18)+2]
+  this.ld1 <- can.df[,((i-1)*18)+10]
+  this.ld2 <- can.df[,((i-1)*18)+11]
+  this.ld3 <- can.df[,((i-1)*18)+12]
+  this.ld4 <- can.df[,((i-1)*18)+13]
+  this.ld5 <- can.df[,((i-1)*18)+14]
+  this.pos <- can.df[,((i-1)*18)+16]
+  this.mask <- can.df[,((i-1)*18)+17]
+  this.socdis <- can.df[,((i-1)*18)+18]
+  ts.reg <- ts(as.numeric(as.character(this.reg)),start=1,end=132)
+  ts.laws1 <- ts(as.numeric(as.character(this.ld1)),start=1,end=132)
+  ts.laws2 <- ts(as.numeric(as.character(this.ld2)),start=1,end=132)
+  ts.laws3 <- ts(as.numeric(as.character(this.ld3)),start=1,end=132)
+  ts.laws4 <- ts(as.numeric(as.character(this.ld4)),start=1,end=132)
+  ts.laws5 <- ts(as.numeric(as.character(this.ld5)),start=1,end=132)
+  ts.pos <- ts(as.numeric(as.character(this.pos))*1000,start=1,end=132)
+  ts.mask <- ts(as.numeric(as.character(this.mask)),start=1,end=132)
+  ts.socdis <- ts(as.numeric(as.character(this.socdis)),start=1,end=132)
+  can.tsld <- cbind(can.tsld,ts.laws1)
+  can.tsld <- cbind(can.tsld,ts.laws2)
+  can.tsld <- cbind(can.tsld,ts.laws3)
+  can.tsld <- cbind(can.tsld,ts.laws4)
+  can.tsld <- cbind(can.tsld,ts.laws5)
+  can.tsld <- cbind(can.tsld,ts.reg)
+  can.ts1 <- cbind(can.ts1,ts.pos)
+  can.ts1 <- cbind(can.ts1,ts.mask)
+  can.ts1 <- cbind(can.ts1,ts.socdis)
+  can.ts1 <- cbind(can.ts1,ts.reg)
+}
+colnames(can.ts1) <- rep(c("Positivity","PercentMasks","Mobility","Region"),nca)
+
+library(dplyr)
+can.bigger <- matrix(0,nrow=2,ncol=18)
+colnames(can.bigger) <- can.data[1,][1:18]
+count <- 0
+for (i in 1:nca) {
+  count <- count + 1
+  prov.df <- can.df[,c(((i-1)*18)+1):(((i-1)*18)+18)]
+  colnames(prov.df) <- can.data[1,][1:18]
+  can.bigger <- rbind(can.bigger,prov.df)
+}
+
+ncanbig <- nrow(can.bigger)
+can.bigger <- can.bigger[3:ncanbig,]
+colnames(can.bigger)[1] <- "Date"
+
+
+#########
+can.df$Date <- as.Date(can.bigger$Date[1:132])
+
+can.df$Date <- strptime(can.df$Date,"%Y-%m-%d")
+can.bigger$Date <- strptime(can.bigger$Date, "%Y-%m-%d")
+
+can.tsdf <- as.xts(x=can.df[,-datecols],order.by=can.df$Date) # all info w/o dates
+can.tsbigger <- as.xts(x=can.bigger,order.by=can.bigger$Date)
+
+can.tslm1 <- c()
+for (i in 1:nca) {
+  prov.lm <- tslm(data=can.ts1[,c((((i-1)*3)+1):(((i-1)*3)+4))],
+                  Positivity~PercentMasks*Mobility)
+  can.tslm1 <- append(can.tslm1,summary(prov.lm),length(can.tslm1))
+}
+
+can.tsres1 <- c()
+for (i in 1:nca) {
+  prov.res1 <- can.tslm1[((i-1)*11)+4][[1]][,c(1,2,4)]
+  prov.temp <- prov.res1[,c(1,2)]
+  prov.ci <- c()
+  for (row in 1:4) {
+    this.est <- prov.temp[row,1]
+    this.se <- prov.temp[row,2]
+    this.low <- this.est-this.se
+    this.upp <- this.est+this.se
+    prov.ci <- append(prov.ci,c(this.low,this.upp))
+  }
+  prov.ci <- matrix(prov.ci,nrow=4,ncol=2,byrow=TRUE)
+  prov.tres1 <- cbind(prov.temp[,1],prov.ci)
+  prov.tres1 <- cbind(prov.tres1,prov.res1[,3])
+  rownames(prov.tres1) <- c("Intercept","PercentMasks","Mobility",
+                               "PercentMasks:Mobility")
+  can.tsres1 <- rbind(can.tsres1,prov.tres1) #[c(((i-1)*4)+1:((i-1)*4)+4,]
+}
+colnames(can.tsres1) <- c("Estimate","Lower","Upper","P-value")
+can.tsres1[,1:3] <- round(can.tsres1[,1:3],4)
+can.tsres1[,4] <- as.numeric(formatC(can.tsres1[,4], format = "e", digits = 4))
+can.pvals <- as.numeric(can.tsres1[,4])
+can.low <- as.numeric(can.tsres1[,2])
+can.upp <- as.numeric(can.tsres1[,3])
+can.tsres1 <- cbind(rownames(can.tsres1),can.tsres1)
+can.namescol <- rbind(ca.names,rep("",nca))
+can.namescol <- rbind(can.namescol,rep("",nca))
+can.namescol <- rbind(can.namescol,rep("",nca))
+can.nameslst <- c()
+for (col in 1:ncol(can.namescol)) {
+  for (row in 1:nrow(can.namescol)) {
+    can.nameslst <- append(can.nameslst,can.namescol[row,col],length(can.nameslst))
+  }
+}
+can.tsres1 <- cbind(can.nameslst,can.tsres1)
+can.tsres1 <- cbind(can.tsres1[,1],can.tsres1[,3:7])
+can.tsres1[,3:6] <- as.numeric(can.tsres1[,3:6])
+rownames(can.tsres1) <- rep("",28)
+colnames(can.tsres1)[1] <- "Province/State"
+colnames(can.tsres1)[2] <- "Pos ~ PMask*SocDis"
+
+can.tsbigger <- can.tsbigger[,2:18]
+rows <- nrow(can.tsbigger)
+for (row in 1:rows) {
+  for (col in 1:17) {
+    tempnum <- can.tsbigger[row,col]
+    can.tsbigger[row,col] <- as.numeric(tempnum)
+  }
+}
+
+can.pos <- c()
+can.pmask <- c()
+can.socdis <- c()
+for (day in 1:132) {
+  this.day1 <- 0
+  this.day2 <- 0
+  this.day3 <- 0
+  for (prov in 1:7) {
+    this.day1 <- this.day1 + as.numeric(can.df[day,16+((prov-1)*18)])
+    this.day2 <- this.day2 + as.numeric(can.df[day,17+((prov-1)*18)])
+    this.day3 <- this.day3 + as.numeric(can.df[day,18+((prov-1)*18)])
+  }
+  can.pos <- append(can.pos,this.day1,length(can.pos))
+  can.pmask <- append(can.pos,this.day2,length(can.pos))
+  can.socdis <- append(can.pos,this.day3,length(can.pos))
+}
+ca.R0 <- ts(ca.R0,start=1,end=132)
+
+can.tsbigger$Region1 <- ts(as.numeric(can.tsbigger$Region),start=1,end=924)
+can.new <- as.xts(cbind(can.pos,ca.R0,can.pmask,can.socdis))
+can.R0tslm <- tslm(data=NULL,ca.R0~can.pmask*can.socdis)
+
+# correlation=corARMA(0.2, form=~Date|Region, p=1, q=0)
+can.tsall <- can.tsbigger[,c(1,2,16,17,18)]
+can.lmall1 <- tslm(Positivity ~ PercentMasks*Mobility, random= ~ Date|Region,
+                  data=can.tsall)
+
+can.covars <- readClipboard()
+can.covars <- cleanTable(can.covars)
+can.testcovars <- can.covars[,c(6,10:18)]
+can.cd <- can.df[,c(6,8)]
+can.ld <- can.df[,c(10:15)]
+can.age <- can.testcovars[,1]
+can.health <- can.testcovars[,c(2:4)]
+can.pol <- can.testcovars[,c(5:10)]
+
+# Want: PM ~ Can.CD + Can.LD + Can.TestCovars
+# dSD = (SD-SD^(0))/SD * 100% where SD^(0) = est(SD(It))
+# dSD ~ Can.CD + Can.LD + Can.TestCovars
+# for each province + national
+
+# Finally,
+# PosCa ~ PosHubei + PosNHubei, for each province
+# CFRCa ~ CFRHubei + CFRNHubei, for each province
+
+# Add lockdown statistics, such as
+# - Length of longest policy, and its province
+# - "" Shortest ""
+# - Most + least frequent start day
+# - Average length of each policy, by policy and by province
+# - Length + type of policy for province with largest mask + socdis effects, resp.
+# - Length + start + end for each province + national avgW
+# - Days since start, if policy, for each, on April 22 (ish? day w/ largest DCases)
+# - "" end of study, July 4th
+
+# USA MODEL #
+
+usa.table <- readClipboard()
+usa.data <- cleanTable(usa.table)
+usa.df <- as.data.frame(usa.data[19:150,]) # Start records: Feb 24, 2020
+usa.names <- readClipboard()
+usa.names <- cleanTable(usa.names)
+nusa <- length(usa.names)
+
+colnames(usa.df) <- rep(colnames(can.tsbigger),51)
+
+datecols <- c()
+for (col in 1:ncol(usa.df)) {
+  if (col%%18==1) {
+    datecols <- append(datecols,col,length(datecols))
+    colnames(usa.df)[col] <- "Date"
+  }
+}
+
+simplecols <- usa.data[1,][1:18]
+simplecols[1] <- "Date"
+
+for (i in 1:nusa) {
+  temp <- colnames(usa.df)[c((((i-1)*18)+1):(((i - 1) * 18) + 18))]
+  this.name <- usa.names[i]
+  for (j in 1:18) {
+    newpaste <- paste(this.name,temp[j])
+    newpaste <- gsub(" ","",newpaste)
+    temp[j] <- newpaste
+  }
+  colnames(usa.df)[c((((i-1)*18)+1):(((i - 1) * 18) + 18))] <- temp
+}
+
+usa.ts1 <- c() # Pos ~ PM*SD
+usa.tsld <- c() # Lockdown laws
+for (i in 1:nusa) {
+  this.reg <- usa.df[,((i-1)*18)+2]
+  this.ld1 <- usa.df[,((i-1)*18)+10]
+  this.ld2 <- usa.df[,((i-1)*18)+11]
+  this.ld3 <- usa.df[,((i-1)*18)+12]
+  this.ld4 <- usa.df[,((i-1)*18)+13]
+  this.ld5 <- usa.df[,((i-1)*18)+14]
+  this.pos <- usa.df[,((i-1)*18)+16]
+  this.mask <- usa.df[,((i-1)*18)+17]
+  this.socdis <- usa.df[,((i-1)*18)+18]
+  ts.reg <- ts(as.numeric(as.character(this.reg)),start=1,end=132)
+  ts.laws1 <- ts(as.numeric(as.character(this.ld1)),start=1,end=132)
+  ts.laws2 <- ts(as.numeric(as.character(this.ld2)),start=1,end=132)
+  ts.laws3 <- ts(as.numeric(as.character(this.ld3)),start=1,end=132)
+  ts.laws4 <- ts(as.numeric(as.character(this.ld4)),start=1,end=132)
+  ts.laws5 <- ts(as.numeric(as.character(this.ld5)),start=1,end=132)
+  ts.pos <- ts(as.numeric(as.character(this.pos))*1000,start=1,end=132)
+  ts.mask <- ts(as.numeric(as.character(this.mask)),start=1,end=132)
+  ts.socdis <- ts(as.numeric(as.character(this.socdis)),start=1,end=132)
+  usa.tsld <- cbind(usa.tsld,ts.laws1)
+  usa.tsld <- cbind(usa.tsld,ts.laws2)
+  usa.tsld <- cbind(usa.tsld,ts.laws3)
+  usa.tsld <- cbind(usa.tsld,ts.laws4)
+  usa.tsld <- cbind(usa.tsld,ts.laws5)
+  usa.tsld <- cbind(usa.tsld,ts.reg)
+  usa.ts1 <- cbind(usa.ts1,ts.pos)
+  usa.ts1 <- cbind(usa.ts1,ts.mask)
+  usa.ts1 <- cbind(usa.ts1,ts.socdis)
+  usa.ts1 <- cbind(usa.ts1,ts.reg)
+}
+colnames(usa.ts1) <- rep(c("Positivity","PercentMasks","Mobility","Region"),nusa)
+
+library(dplyr)
+usa.bigger <- matrix(0,nrow=2,ncol=18)
+colnames(usa.bigger) <- usa.data[1,][1:18]
+count <- 0
+for (i in 1:nusa) {
+  count <- count + 1
+  prov.df <- usa.df[,c(((i-1)*18)+1):(((i-1)*18)+18)]
+  colnames(prov.df) <- usa.data[1,][1:18]
+  usa.bigger <- rbind(usa.bigger,prov.df)
+}
+
+nusabig <- nrow(usa.bigger)
+usa.bigger <- usa.bigger[3:nusabig,]
+colnames(usa.bigger)[1] <- "Date"
+
+usa.df$Date <- strptime(usa.df$Date,"%Y-%m-%d")
+usa.bigger$Date <- strptime(usa.bigger$Date, "%Y-%m-%d")
+
+usa.tsdf <- as.xts(x=usa.df[,-datecols],order.by=usa.df$Date) # all info w/o dates
+usa.tsbigger <- as.xts(x=usa.bigger,order.by=usa.bigger$Date)
+
+usa.tslm1 <- c()
+for (i in 1:nusa) {
+  this.lm <- tslm(data=usa.ts1[,c((((i-1)*3)+1):(((i-1)*3)+4))],
+                  Positivity~0+PercentMasks*Mobility)
+  usa.tslm1 <- append(usa.tslm1,summary(this.lm),length(usa.tslm1))
+}
+
+# Has the list of all 4x4 matrices
+counts <- c()
+estcols <- c("Estimate","Std. Error","t value","Pr(>|t|)")
+rowslm <- length(usa.tslm1)
+for (t in 1:rowslm) {
+  is.coeff <- colnames(usa.tslm1[term][[1]])==estcols
+  if (is.coeff==TRUE) {
+    counts <- append(counts,t,length(counts))
+  }
+}
+
+remove_if <- function(lst,test_fn) {
+  ## DD . char or list
+  if (class(lst)=="character"){
+    unlist(lapply(lst ,function(x){if(!(test_fn(x))) x }))
+  } else {
+    
+    remove_if_null(lapply(lst ,function(x){if(!(test_fn(x))) x }))}
+}
+
+
+usa.tsres1 <- matrix(0,nrow=4,ncol=4)
+for (term in counts) {
+  prov.test <- usa.tslm1[term][[1]]
+  prov.res1 <- prov.test[,c(1,2,4)]
+  prov.temp <- prov.res1[,c(1,2)]
+  prov.ci <- c()
+  for (row in 1:4) {
+    this.est <- prov.temp[row,1]
+    this.se <- prov.temp[row,2]
+    this.low <- this.est-this.se
+    this.upp <- this.est+this.se
+    prov.ci <- append(prov.ci,c(this.low,this.upp),length(prov.ci))
+  }
+  prov.ci <- matrix(prov.ci,nrow=4,ncol=2,byrow=TRUE)
+  prov.tres1 <- cbind(prov.res1[,1],prov.ci)
+  prov.tres1 <- cbind(prov.tres1,prov.res1[,3])
+  rownames(prov.tres1) <- c("Intercept","PercentMasks","Mobility",
+                            "PercentMasks:Mobility")
+  usa.tsres1 <- rbind(usa.tsres1,prov.tres1) #[c(((i-1)*4)+1:((i-1)*4)+4,]
+}
+
+colnames(usa.tsres1) <- c("Estimate","Lower","Upper","P-value")
+usa.tsres1[,1:3] <- round(usa.tsres1[,1:3],4)
+usa.tsres1[,4] <- as.numeric(formatC(usa.tsres1[,4], format = "e", digits = 4))
+rows <- nrow(usa.tsres1)
+usa.tsres1 <- usa.tsres1[2:rows]
+
+usa.tsbigger <- usa.tsbigger[,2:18]
+rows <- nrow(usa.tsbigger)
+for (row in 1:rows) {
+  for (col in 1:17) {
+    tempnum <- usa.tsbigger[row,col]
+    usa.tsbigger[row,col] <- as.numeric(tempnum)
+  }
+}
+
+usa.lmall1 <- lme(Positivity ~ PercentMasks*Mobility*Date, random= ~ 1|Region,
+                  correlation=corARMA(0.2, form=~Date|Region, p=1, q=0),
+                  data=usa.tsbigger[,c(1,2,16,17,18)])
+
+# Italy
+
+it.table <- readClipboard()
+it.data <- cleanTable(it.table)
+
+for (row in 1:nrow(it.data)) {
+  for (col in 1:ncol(it.data)) {
+    temp <- it.data[row,col]
+    if (identical(c(" -   "),temp)) {
+      it.data[row,col] <- 0.0
+    }
+  }
+}
+
+italy.df <- as.data.frame(it.data[19:150,]) # Start records: Feb 24, 2020
+for (col in 1:ncol(italy.df)) {
+  if (colnames(italy.df)[col]=="Country") {
+    colnames(italy.df)[col] <- "Date"
+  }
+}
+colnames(italy.df) <- it.data[1,]
+
+datecols <- c()
+for (col in 1:ncol(italy.df)) {
+  if (col%%18==1) {
+    datecols <- append(datecols,col,length(datecols))
+    colnames(italy.df)[col] <- "Date"
+  }
+}
+
+it.names <- readClipboard()
+it.names <- cleanTable(it.names)
+it.names <- c(it.names)
+nit <- length(it.names)
+for (i in 1:nit) {
+  temp <- colnames(italy.df)[c((((i-1)*18)+1):(((i - 1) * 18) + 18))]
+  this.name <- it.names[i]
+  for (j in 1:18) {
+    newpaste <- paste(this.name,temp[j])
+    newpaste <- gsub(" ","",newpaste)
+    temp[j] <- newpaste
+  }
+  colnames(italy.df)[c((((i-1)*18)+1):(((i - 1) * 18) + 18))] <- temp
+}
+
+last <- colnames(italy.df)[361:377]
+for (j in 1:length(last)) {
+  last[j] <- paste("Veneto",last[j])
+  last[j] <- gsub(" ","",last[j])
+}
+colnames(italy.df)[361:377] <- last
+
+newcolnames <- c()
+for (i in 8:nit) {
+  region <- paste(it.names[i],"Region")
+  temp <- colnames(italy.df)[(((i-1)*17)+2):(((i-1)*17)+17)]
+  
+}
+
+italy.ts1 <- c() # Pos ~ PM*SD
+italy.tsld <- c() # Lockdown laws
+for (i in 1:nit) {
+  this.reg <- italy.df[,((i-1)*18)+2]
+  this.ld1 <- italy.df[,((i-1)*18)+10]
+  this.ld2 <- italy.df[,((i-1)*18)+11]
+  this.ld3 <- italy.df[,((i-1)*18)+12]
+  this.ld4 <- italy.df[,((i-1)*18)+13]
+  this.ld5 <- italy.df[,((i-1)*18)+14]
+  this.pos <- italy.df[,((i-1)*18)+16]
+  this.mask <- italy.df[,((i-1)*18)+17]
+  this.socdis <- italy.df[,((i-1)*18)+18]
+  ts.reg <- ts(as.numeric(as.character(this.reg)),start=1,end=132)
+  ts.laws1 <- ts(as.numeric(as.character(this.ld1)),start=1,end=132)
+  ts.laws2 <- ts(as.numeric(as.character(this.ld2)),start=1,end=132)
+  ts.laws3 <- ts(as.numeric(as.character(this.ld3)),start=1,end=132)
+  ts.laws4 <- ts(as.numeric(as.character(this.ld4)),start=1,end=132)
+  ts.laws5 <- ts(as.numeric(as.character(this.ld5)),start=1,end=132)
+  ts.pos <- ts(round(as.numeric(as.character(this.pos)),1),start=1,end=132)
+  ts.mask <- ts(as.numeric(as.character(this.mask)),start=1,end=132)
+  ts.socdis <- ts(as.numeric(as.character(this.socdis)),start=1,end=132)
+  italy.tsld <- cbind(italy.tsld,ts.laws1)
+  italy.tsld <- cbind(italy.tsld,ts.laws2)
+  italy.tsld <- cbind(italy.tsld,ts.laws3)
+  italy.tsld <- cbind(italy.tsld,ts.laws4)
+  italy.tsld <- cbind(italy.tsld,ts.laws5)
+  italy.tsld <- cbind(italy.tsld,ts.reg)
+  italy.ts1 <- cbind(italy.ts1,ts.pos)
+  italy.ts1 <- cbind(italy.ts1,ts.mask)
+  italy.ts1 <- cbind(italy.ts1,ts.socdis)
+  italy.ts1 <- cbind(italy.ts1,ts.reg)
+}
+
+temp.ts1 <- italy.ts1[,1:32]
+first16 <- ts((italy.df[,(18*7)+16]),start=1,end=132)
+temp.ts2 <- cbind(first16,italy.ts1[,29])
+temp.ts2 <- cbind(temp.ts2,italy.ts1[,30])
+temp.ts2 <- cbind(temp.ts2,italy.ts1[,32])
+temp.ts3 <- c()
+for (i in 9:21) {
+  temp.ts3 <- cbind(temp.ts3,italy.df[,(18*(i-1))+16])
+  temp.ts3 <- cbind(temp.ts3,italy.df[,1+(4*(i-1))])
+  temp.ts3 <- cbind(temp.ts3,italy.df[,2+(4*(i-1))])
+  temp.ts3 <- cbind(temp.ts3,italy.df[,(18*(i-1))+2])
+}
+temp.ts1 <- cbind(temp.ts1,temp.ts2)
+temp.ts1 <- cbind(temp.ts1,temp.ts3)
+italy.ts1 <- temp.ts1
+
+colnames(italy.ts1) <- rep(c("Positivity","PercentMasks","Mobility","Region"),nit)
+
+
+
+library(dplyr)
+italy.bigger <- matrix(0,nrow=2,ncol=18)
+colnames(italy.bigger) <- it.data[1,][1:18]
+count <- 0
+for (i in 1:nit) {
+  count <- count + 1
+  prov.df <- italy.df[,c(((i-1)*18)+1):(((i-1)*18)+18)]
+  colnames(prov.df) <- it.data[1,][1:18]
+  italy.bigger <- rbind(italy.bigger,prov.df)
+}
+
+nitalybig <- nrow(italy.bigger)
+italy.bigger <- italy.bigger[3:nitalybig,]
+colnames(italy.bigger)[1] <- "Date"
+
+italy.df$Date <- strptime(italy.df$AbruzzoDate,"%Y-%m-%d")
+italy.bigger$Date <- strptime(italy.bigger$AbruzzoDate, "%Y-%m-%d")
+
+italy.tsdf <- as.xts(x=italy.df[,-datecols],order.by=italy.df$Date) # all info w/o dates
+italy.tsbigger <- as.xts(x=italy.bigger,order.by=rep(italy.df$Date,nit))
+
+italy.tslm1 <- c()
+for (i in 1:nit) {
+  this.lm <- tslm(data=italy.ts1[,c((((i-1)*3)+1):(((i-1)*3)+4))],
+                  Positivity~PercentMasks*Mobility)
+  italy.tslm1 <- append(italy.tslm1,summary(this.lm),length(italy.tslm1))
+}
+
+cols <- c("Estimate","Std. Error","t value","Pr(>|t|)")
+italy.tsres1 <- c()
+for (i in 1:nit) {
+  if (identical(colnames(italy.tslm1[i][[1]]),cols)) {
+    prov.res1 <- italy.tslm1[i][[1]][,c(1,2,4)]
+    prov.temp <- prov.res1[,c(1,2)]
+    prov.ci <- c()
+    for (row in 1:4) {
+      this.est <- prov.temp[row,1]
+      this.se <- prov.temp[row,2]
+      this.low <- this.est-this.se
+      this.upp <- this.est+this.se
+      prov.ci <- append(prov.ci,c(this.low,this.upp))
+    }
+    prov.ci <- matrix(prov.ci,nrow=4,ncol=2,byrow=TRUE)
+    prov.tres1 <- cbind(prov.temp[,1],prov.ci)
+    prov.tres1 <- cbind(prov.tres1,prov.res1[,3])
+    rownames(prov.tres1) <- c("Intercept","PercentMasks","Mobility",
+                              "PercentMasks:Mobility")
+    italy.tsres1 <- rbind(italy.tsres1,prov.tres1) #[c(((i-1)*4)+1:((i-1)*4)+4,]
+  }
+}
+colnames(italy.tsres1) <- c("Estimate","Lower","Upper","P-value")
+italy.tsres1[,1:3] <- round(italy.tsres1[,1:3],4)
+italy.tsres1[,4] <- as.numeric(formatC(italy.tsres1[,4], format = "e", digits = 4))
+
+italy.tsbigger <- italy.tsbigger[,2:18]
+rows <- nrow(italy.tsbigger)
+for (row in 1:rows) {
+  for (col in 1:17) {
+    tempnum <- italy.tsbigger[row,col]
+    italy.tsbigger[row,col] <- as.numeric(tempnum)
+  }
+}
+
+italy.lmall1 <- lme(Positivity ~ PercentMasks*Mobility*Date, random= ~ 1|Region,
+                  correlation=corARMA(0.2, form=~Date|Region, p=1, q=0),
+                  data=italy.tsbigger[,c(1,2,16,17,18)])
+
+
+# Germany
+germ.table <- readClipboard()
+germ.data <- cleanTable(germ.table)
+germ.df <- as.data.frame(germ.data[19:150,]) # Start records: Feb 24, 2020
+for (col in 1:ncol(germ.df)) {
+  if (colnames(germ.df)[col]=="Country") {
+    colnames(germ.df)[col] <- "Date"
+  }
+}
+colnames(germ.df) <- germ.data[1,]
+
+datecols <- c()
+for (col in 1:ncol(germ.df)) {
+  if (col%%18==1) {
+    datecols <- append(datecols,col,length(datecols))
+    colnames(germ.df)[col] <- "Date"
+  }
+}
+
+de.names <- readClipboard()
+de.names <- cleanTable(de.names)
+nde <- length(de.names)
+for (i in 1:nde) {
+  temp <- colnames(germ.df)[c((((i-1)*18)+1):(((i - 1) * 18) + 18))]
+  this.name <- de.names[i]
+  for (j in 1:18) {
+    newpaste <- paste(this.name,temp[j])
+    newpaste <- gsub(" ","",newpaste)
+    temp[j] <- newpaste
+  }
+  colnames(germ.df)[c((((i-1)*18)+1):(((i - 1) * 18) + 18))] <- temp
+}
+
+germ.ts1 <- c() # Pos ~ PM*SD
+germ.tsld <- c() # Lockdown laws
+for (i in 1:nde) {
+  this.reg <- germ.df[,((i-1)*18)+2]
+  this.ld1 <- germ.df[,((i-1)*18)+10]
+  this.ld2 <- germ.df[,((i-1)*18)+11]
+  this.ld3 <- germ.df[,((i-1)*18)+12]
+  this.ld4 <- germ.df[,((i-1)*18)+13]
+  this.ld5 <- germ.df[,((i-1)*18)+14]
+  this.pos <- germ.df[,((i-1)*18)+16]
+  this.mask <- germ.df[,((i-1)*18)+17]
+  this.socdis <- germ.df[,((i-1)*18)+18]
+  ts.reg <- ts(as.numeric(as.character(this.reg)),start=1,end=132)
+  ts.laws1 <- ts(as.numeric(as.character(this.ld1)),start=1,end=132)
+  ts.laws2 <- ts(as.numeric(as.character(this.ld2)),start=1,end=132)
+  ts.laws3 <- ts(as.numeric(as.character(this.ld3)),start=1,end=132)
+  ts.laws4 <- ts(as.numeric(as.character(this.ld4)),start=1,end=132)
+  ts.laws5 <- ts(as.numeric(as.character(this.ld5)),start=1,end=132)
+  ts.pos <- ts(as.numeric(as.character(this.pos))*1000,start=1,end=132)
+  ts.mask <- ts(as.numeric(as.character(this.mask)),start=1,end=132)
+  ts.socdis <- ts(as.numeric(as.character(this.socdis)),start=1,end=132)
+  germ.tsld <- cbind(germ.tsld,ts.laws1)
+  germ.tsld <- cbind(germ.tsld,ts.laws2)
+  germ.tsld <- cbind(germ.tsld,ts.laws3)
+  germ.tsld <- cbind(germ.tsld,ts.laws4)
+  germ.tsld <- cbind(germ.tsld,ts.laws5)
+  germ.tsld <- cbind(germ.tsld,ts.reg)
+  germ.ts1 <- cbind(germ.ts1,ts.pos)
+  germ.ts1 <- cbind(germ.ts1,ts.mask)
+  germ.ts1 <- cbind(germ.ts1,ts.socdis)
+  germ.ts1 <- cbind(germ.ts1,ts.reg)
+}
+colnames(germ.ts1) <- rep(c("Positivity","PercentMasks","Mobility","Region"),nde)
+
+library(dplyr)
+germ.bigger <- matrix(0,nrow=2,ncol=18)
+colnames(germ.bigger) <- germ.data[1,][1:18]
+count <- 0
+for (i in 1:nde) {
+  count <- count + 1
+  prov.df <- germ.df[,c(((i-1)*18)+1):(((i-1)*18)+18)]
+  colnames(prov.df) <- germ.data[1,][1:18]
+  germ.bigger <- rbind(germ.bigger,prov.df)
+}
+
+ngermbig <- nrow(germ.bigger)
+germ.bigger <- germ.bigger[3:ngermbig,]
+colnames(germ.bigger)[1] <- "Date"
+
+#########
+germ.df$Date <- strptime(germ.df$Date,"%Y-%m-%d")
+germ.bigger$Date <- strptime(germ.bigger$Date, "%Y-%m-%d")
+
+germ.tsdf <- as.xts(x=germ.df[,-datecols],order.by=germ.df$Date) # all info w/o dates
+germ.tsbigger <- as.xts(x=germ.bigger,order.by=germ.bigger$Date)
+
+germ.tslm1 <- c()
+for (i in 1:nde) {
+  this.tsdf <- germ.ts1[,c((((i-1)*3)+1):(((i-1)*3)+4))]
+  this.lm <- tslm(data=this.tsdf,
+                  Positivity~PercentMasks*Mobility)
+  germ.tslm1 <- append(germ.tslm1,summary(this.lm),length(germ.tslm1))
+}
+
+germ.tsres1 <- c()
+for (i in 1:nde) {
+  prov.res1 <- germ.tslm1[((i-1)*11)+4][[1]][,c(1,2,4)]
+  prov.temp <- prov.res1[,c(1,2)]
+  prov.ci <- c()
+  for (row in 1:4) {
+    this.est <- prov.temp[row,1]
+    this.se <- prov.temp[row,2]
+    this.low <- this.est-this.se
+    this.upp <- this.est+this.se
+    prov.ci <- append(prov.ci,c(this.low,this.upp))
+  }
+  prov.ci <- matrix(prov.ci,nrow=4,ncol=2,byrow=TRUE)
+  prov.tres1 <- cbind(prov.temp[,1],prov.ci)
+  prov.tres1 <- cbind(prov.tres1,prov.res1[,3])
+  rownames(prov.tres1) <- c("Intercept","PercentMasks","Mobility",
+                            "PercentMasks:Mobility")
+  germ.tsres1 <- rbind(germ.tsres1,prov.tres1) #[c(((i-1)*4)+1:((i-1)*4)+4,]
+}
+colnames(germ.tsres1) <- c("Estimate","Lower","Upper","P-value")
+germ.tsres1[,1:3] <- round(germ.tsres1[,1:3],4)
+germ.tsres1[,4] <- as.numeric(formatC(germ.tsres1[,4], format = "e", digits = 4))
+
+germ.tsbigger <- germ.tsbigger[,2:18]
+rows <- nrow(germ.tsbigger)
+for (row in 1:rows) {
+  for (col in 1:17) {
+    tempnum <- germ.tsbigger[row,col]
+    germ.tsbigger[row,col] <- as.numeric(tempnum)
+  }
+}
+
+# correlation=corARMA(0.2, form=~Date|Region, p=1, q=0)
+germ.tsall <- germ.tsbigger[,c(1,2,16,17,18)]
+germ.lmall1 <- tslm(Positivity ~ PercentMasks*Mobility, random= ~ Date|Region,
+                   data=germ.tsall)
+
+
+# Europe-Small
